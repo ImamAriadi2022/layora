@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import React from 'react';
+import { renderToString } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
 import { useProjectStore } from '../../stores/useProjectStore.js';
 import { useReferenceStore } from '../../stores/useReferenceStore.js';
 import { useAgentStore } from '../../stores/useAgentStore.js';
@@ -6,6 +9,13 @@ import { useDesignSystemStore } from '../../stores/useDesignSystemStore.js';
 import { resolveNodeTokens } from '../renderer/DesignRenderer.jsx';
 import { copyDesignToFigmaClipboard } from '../exporters/figmaExporter.js';
 import { findNodeById } from '../design-schema/operations.js';
+import DashboardPage from '../../features/dashboard/DashboardPage.jsx';
+import NewProjectPage from '../../features/projects/NewProjectPage.jsx';
+import WorkspacePage from '../../features/design-canvas/WorkspacePage.jsx';
+import ReferenceManagerPage from '../../features/references/ReferenceManagerPage.jsx';
+import AiAgentsPage from '../../features/ai-agents/AiAgentsPage.jsx';
+import DesignSystemPage from '../../features/design-system/DesignSystemPage.jsx';
+import SettingsPage from '../../features/projects/SettingsPage.jsx';
 
 describe('Layora Workflows — Stores, Undo/Redo, Versions, References, Tokens & Export', () => {
   beforeEach(async () => {
@@ -186,5 +196,28 @@ describe('Layora Workflows — Stores, Undo/Redo, Versions, References, Tokens &
     expect(exportRes.compatibility.compatible).toBe(true);
     expect(clipboardTextWritten).toContain('<svg xmlns="http://www.w3.org/2000/svg"');
     expect(clipboardTextWritten).toContain('Vortex Cloud');
+  });
+
+  it('renders all 7 application screens without React or Zustand selector errors', () => {
+    const pages = [
+      { name: 'DashboardPage', comp: DashboardPage, route: '/' },
+      { name: 'NewProjectPage', comp: NewProjectPage, route: '/projects/new' },
+      { name: 'WorkspacePage', comp: WorkspacePage, route: '/workspace' },
+      { name: 'ReferenceManagerPage', comp: ReferenceManagerPage, route: '/references' },
+      { name: 'AiAgentsPage', comp: AiAgentsPage, route: '/agents' },
+      { name: 'DesignSystemPage', comp: DesignSystemPage, route: '/design-system' },
+      { name: 'SettingsPage', comp: SettingsPage, route: '/settings' },
+    ];
+
+    for (const p of pages) {
+      const html = renderToString(
+        React.createElement(
+          MemoryRouter,
+          { initialEntries: [p.route] },
+          React.createElement(p.comp)
+        )
+      );
+      expect(html.length).toBeGreaterThan(100);
+    }
   });
 });

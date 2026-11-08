@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Undo2,
   Redo2,
@@ -23,6 +24,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Terminal,
   X,
 } from 'lucide-react';
 import { NODE_TYPES, VIEWPORT_PRESETS } from '../../core/design-schema/schema.js';
@@ -36,6 +38,7 @@ import PropertiesPanel from '../design-editor/PropertiesPanel.jsx';
 import AiDesignChatPanel from '../design-chat/AiDesignChatPanel.jsx';
 import VersionHistoryPanel from '../version-history/VersionHistoryPanel.jsx';
 import FigmaExportModal from '../figma-export/FigmaExportModal.jsx';
+import ExternalAgentRoom from './ExternalAgentRoom.jsx';
 import { useProjectStore } from '../../stores/useProjectStore.js';
 import { useDesignSystemStore } from '../../stores/useDesignSystemStore.js';
 
@@ -71,7 +74,17 @@ export default function WorkspacePage() {
 
   const { designSystem } = useDesignSystemStore();
 
+  const displayedDocument = pendingRevision?.updatedDocument || activeDocument;
+  const doc = displayedDocument?.document;
+  const viewport = doc?.viewport || { width: 1440, height: 1024 };
+
+  const canvasContainerRef = useRef(null);
   const artboardRef = useRef(null);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeProj = projects.find((p) => p.id === activeProjectId);
+  const isExternal = activeProj?.executionMode === 'external';
+
   const [rightTab, setRightTab] = useState('properties'); // 'properties' | 'chat' | 'versions'
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
@@ -81,10 +94,108 @@ export default function WorkspacePage() {
   const [schemaEditorError, setSchemaEditorError] = useState(null);
   const [quickCopyToast, setQuickCopyToast] = useState(null);
   const [panning, setPanning] = useState(null);
+  const [exchangeStatus, setExchangeStatus] = useState(null);
 
-  const displayedDocument = pendingRevision?.updatedDocument || activeDocument;
-  const doc = displayedDocument?.document;
-  const viewport = doc?.viewport || { width: 1440, height: 1024 };
+  // Active workspace view: 'agent-room' for external agent waiting room, 'canvas' for visual design canvas
+  const [activeView, setActiveView] = useState(() => {
+    const requested = searchParams.get('view');
+    if (requested === 'agent-room') return 'agent-room';
+    if (requested === 'canvas') return 'canvas';
+    return isExternal && (!doc?.children || doc.children.length === 0) ? 'agent-room' : 'canvas';
+  });
+
+  // Switch to agent room if new external project is opened without generated output
+  useEffect(() => {
+    if (isExternal && (!doc?.children || doc.children.length === 0)) {
+      setActiveView('agent-room');
+    }
+  }, [activeProjectId, isExternal, doc?.children?.length]);
+
+  const handleRefreshExchange = useCallback(async () => {
+    if (!activeProjectId) return;
+    try {
+      const res = await fetch(`/bridge/project-exchange/${activeProjectId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setExchangeStatus(data);
+      if (data.document) {
+        const validation = normalizeAndValidateSchema(data.document);
+        if (validation.valid) {
+          await commitDocumentUpdate(validation.document, false);
+          setActiveView('canvas');
+        }
+      }
+    } catch (e) {
+      console.warn('Bridge exchange refresh error:', e);
+    }
+  }, [activeProjectId, commitDocumentUpdate]);
+
+  // Live Exchange Bridge Watcher: polls /bridge/project-exchange/:projectId
+  useEffect(() => {
+    if (!activeProjectId) return undefined;
+    let isCancelled = false;
+    let lastSeenModified = null;
+
+    const checkExchange = async () => {
+      try {
+        const res = await fetch(`/bridge/project-exchange/${activeProjectId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (isCancelled) return;
+        setExchangeStatus(data);
+
+        if (data.document && data.lastModified && data.lastModified !== lastSeenModified) {
+          lastSeenModified = data.lastModified;
+          const validation = normalizeAndValidateSchema(data.document);
+          if (validation.valid) {
+            await commitDocumentUpdate(validation.document, false);
+            setActiveView('canvas');
+            setQuickCopyToast({
+              ok: true,
+              message: 'Desain baru dari Antigravity terdeteksi dan langsung dirender di kanvas!',
+            });
+            setTimeout(() => setQuickCopyToast(null), 4000);
+          }
+        }
+      } catch {
+        // bridge server offline
+      }
+    };
+
+    checkExchange();
+    const interval = setInterval(checkExchange, 1500);
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+    };
+  }, [activeProjectId, commitDocumentUpdate]);
+
+  const fitCanvasToScreen = () => {
+    if (!canvasContainerRef.current) return;
+    const containerW = canvasContainerRef.current.clientWidth - 64;
+    const containerH = canvasContainerRef.current.clientHeight - 64;
+    const docW = viewport.width || 1440;
+    const docH = viewport.height || 1024;
+    const scaleW = containerW / docW;
+    const scaleH = containerH / docH;
+
+    // For wide layouts (e.g. width > 2400) or tall layouts (e.g. height > 1400)
+    let optimalZoom;
+    if (docW > 2400) {
+      optimalZoom = Math.min(Math.max(0.22, Math.min(scaleW * 0.98, scaleH * 0.98)), 0.75);
+    } else if (docH > 1400) {
+      optimalZoom = Math.min(Math.max(0.45, scaleW * 0.95), 1.0);
+    } else {
+      optimalZoom = Math.min(Math.max(0.25, Math.min(scaleW, scaleH)), 1.5);
+    }
+    setCanvasZoom(Number(optimalZoom.toFixed(2)));
+    setCanvasPan(0, 0);
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(fitCanvasToScreen, 120);
+    return () => clearTimeout(timer);
+  }, [viewport.width, viewport.height, leftPanelOpen, rightPanelOpen]);
 
   // Global Workspace Keyboard Shortcuts (design.md Section 6.3 & 11)
   useEffect(() => {
@@ -262,6 +373,40 @@ export default function WorkspacePage() {
 
         {/* Center: Add Node Tools & Canvas Viewport/Zoom */}
         <div className="hidden md:flex items-center gap-1.5">
+          {isExternal && (
+            <div className="flex items-center rounded-control border border-border bg-app p-0.5 mr-1.5">
+              <button
+                type="button"
+                onClick={() => setActiveView('agent-room')}
+                className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-meta font-medium transition-colors ${
+                  activeView === 'agent-room'
+                    ? 'bg-accent text-white'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                <Terminal className="h-3 w-3" />
+                <span>Antigravity Room</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView('canvas')}
+                className={`inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-meta font-medium transition-colors ${
+                  activeView === 'canvas'
+                    ? 'bg-accent text-white'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                <Layout className="h-3 w-3" />
+                <span>Canvas Desain</span>
+                {exchangeStatus?.nodeCount > 0 && (
+                  <span className="rounded bg-success/20 px-1 text-[10px] text-success font-semibold">
+                    {exchangeStatus.nodeCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          )}
+
           {/* Tool Mode Switch */}
           <div className="flex items-center rounded-control border border-border bg-app p-0.5">
             <button
@@ -374,7 +519,7 @@ export default function WorkspacePage() {
             </button>
             <button
               type="button"
-              onClick={resetCanvasView}
+              onClick={fitCanvasToScreen}
               title="Fit to Screen"
               aria-label="Fit to Screen"
               className="p-1 text-text-secondary hover:text-text-primary"
@@ -398,6 +543,11 @@ export default function WorkspacePage() {
                 {p.width}×{p.height}
               </option>
             ))}
+            {!VIEWPORT_PRESETS.some((p) => p.width === viewport.width && p.height === viewport.height) && (
+              <option value={`${viewport.width}x${viewport.height}`}>
+                {viewport.width}×{viewport.height} (Custom)
+              </option>
+            )}
           </select>
         </div>
 
@@ -476,115 +626,207 @@ export default function WorkspacePage() {
         </div>
       )}
 
-      {/* MAIN 3-REGION WORKSPACE BODY */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* 1. Left Panel: Pages & Layer Hierarchy */}
-        {leftPanelOpen && <LayerTreePanel />}
+      {/* MAIN WORKSPACE BODY */}
+      {isExternal && activeView === 'agent-room' ? (
+        <ExternalAgentRoom
+          projectId={activeProjectId}
+          projectName={activeProj?.name}
+          exchangeStatus={exchangeStatus}
+          onOpenCanvas={() => setActiveView('canvas')}
+          onRefreshExchange={handleRefreshExchange}
+        />
+      ) : (
+        <div className="flex flex-1 min-h-0 overflow-hidden">
+          {/* 1. Left Panel: Pages & Layer Hierarchy */}
+          {leftPanelOpen && <LayerTreePanel />}
 
-        {/* 2. Center Interactive Canvas */}
-        <div
-          onMouseDown={handleCanvasMouseDown}
-          onMouseMove={handleCanvasMouseMove}
-          onMouseUp={handleCanvasMouseUp}
-          onMouseLeave={handleCanvasMouseUp}
-          className={`canvas-dot-grid relative flex-1 overflow-auto p-12 flex items-start justify-center ${
-            canvasState.tool === 'hand' ? 'cursor-grab active:cursor-grabbing' : ''
-          }`}
-        >
+          {/* 2. Center Interactive Canvas */}
           <div
-            style={{
-              transform: `translate(${canvasState.panX}px, ${canvasState.panY}px) scale(${canvasState.zoom})`,
-              transformOrigin: 'top center',
-              transition: panning ? 'none' : 'transform 60ms ease-out',
-            }}
-            className="relative"
+            ref={canvasContainerRef}
+            onMouseDown={handleCanvasMouseDown}
+            onMouseMove={handleCanvasMouseMove}
+            onMouseUp={handleCanvasMouseUp}
+            onMouseLeave={handleCanvasMouseUp}
+            className={`canvas-dot-grid relative flex-1 overflow-auto p-8 flex flex-col ${
+              (viewport.width || 1440) > 2400 ? 'items-start' : 'items-center'
+            } justify-start ${
+              canvasState.tool === 'hand' ? 'cursor-grab active:cursor-grabbing' : ''
+            }`}
           >
-            {/* Artboard Header Label */}
-            <div className="mb-2 flex items-center justify-between text-meta text-text-secondary select-none">
-              <span className="font-medium">
-                {doc?.name || 'Artboard'} {pendingRevision ? '(Previewing Proposed Revision)' : ''}
-              </span>
-              <span className="font-mono">
-                {viewport.width} × {viewport.height}
-              </span>
-            </div>
-
-            {/* Rendered Design Document + Separate SVG Selection Overlay */}
-            <div className="relative">
-              <DesignRenderer
-                schemaDoc={displayedDocument}
-                selectedNodeId={selectedNodeId}
-                hoveredNodeId={hoveredNodeId}
-                onSelectNode={(id) => {
-                  if (canvasState.tool === 'select') {
-                    setSelectedNodeId(id);
-                  }
+            <div
+              style={{
+                width: `${Math.round(viewport.width * canvasState.zoom)}px`,
+                height: `${Math.round(viewport.height * canvasState.zoom + 36)}px`,
+                position: 'relative',
+                flexShrink: 0,
+                margin: '24px auto',
+                transform: `translate(${canvasState.panX}px, ${canvasState.panY}px)`,
+                transition: panning ? 'none' : 'transform 60ms ease-out',
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: `${viewport.width}px`,
+                  transform: `scale(${canvasState.zoom})`,
+                  transformOrigin: 'top left',
                 }}
-                onHoverNode={(id) => {
-                  if (canvasState.tool === 'select') {
-                    setHoveredNodeId(id);
-                  }
-                }}
-                onInlineTextChange={(nodeId, newText) =>
-                  updateNodeById(nodeId, { text: newText })
-                }
-                designTokens={designSystem}
-                interactive={canvasState.tool === 'select'}
-                artboardRef={artboardRef}
-                zoom={canvasState.zoom}
-              />
+                className="relative"
+              >
+              {/* Artboard Header Label */}
+              <div className="mb-2 flex items-center justify-between text-meta text-text-secondary select-none">
+                <span className="font-medium">
+                  {doc?.name || 'Artboard'} {pendingRevision ? '(Previewing Proposed Revision)' : ''}
+                </span>
+                <span className="font-mono">
+                  {viewport.width} × {viewport.height}
+                </span>
+              </div>
 
-              <CanvasSelectionOverlay
-                artboardRef={artboardRef}
-                selectedNodeId={selectedNodeId}
-                hoveredNodeId={hoveredNodeId}
-                zoom={canvasState.zoom}
-                activeDocument={displayedDocument}
-                onResizeNode={(nodeId, updates) => updateNodeById(nodeId, updates)}
-              />
+              {/* Rendered Design Document + Separate SVG Selection Overlay */}
+              <div className="relative">
+                {displayedDocument?.document?.children?.length === 0 ? (
+                  <div
+                    ref={artboardRef}
+                    style={{
+                      width: `${viewport.width}px`,
+                      minHeight: `${viewport.height}px`,
+                      backgroundColor: '#FFFFFF',
+                    }}
+                    className="rounded border border-dashed border-accent/60 bg-panel p-12 flex flex-col items-center justify-center text-center shadow-sm"
+                  >
+                    <div className="max-w-xl space-y-4">
+                      <div className="inline-flex items-center gap-2 rounded-full border border-success/40 bg-success/10 px-3 py-1 text-xs font-semibold text-success">
+                        <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
+                        <span>Antigravity Live File Exchange Aktif</span>
+                      </div>
+
+                      <h2 className="text-xl font-bold text-text-primary tracking-tight">
+                        Setup Proyek Selesai — Menunggu Prompt di Chat Antigravity
+                      </h2>
+
+                      <p className="text-xs text-text-secondary leading-relaxed">
+                        Proyek ini menggunakan <strong>External AI Agent (Antigravity)</strong>. Anda tidak perlu mendesain manual di website ini dulu. Cukup beri tahu Antigravity di chat IDE ini untuk membuat atau merevisi desain, dan Layora akan otomatis membaca file output lalu merendernya di kanvas ini secara real-time!
+                      </p>
+
+                      <div className="rounded-control border border-border bg-app p-4 text-left space-y-2 text-xs font-mono">
+                        <div className="flex items-center justify-between text-meta text-text-muted">
+                          <span>FILE EXCHANGE STRUCTURE</span>
+                          <span className="text-success font-semibold">Watching for updates</span>
+                        </div>
+                        <div>
+                          <span className="text-text-muted block text-meta">1. File yang Dibaca Antigravity:</span>
+                          <span className="text-text-primary font-medium select-all">
+                            {exchangeStatus?.relativeInputPath || `.layora/projects/${activeProjectId}/input_context.json`}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-text-muted block text-meta">2. File Output yang Ditulis Antigravity:</span>
+                          <span className="text-accent font-medium select-all">
+                            {exchangeStatus?.relativeOutputPath || `.layora/projects/${activeProjectId}/design_output.json`}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setActiveView('agent-room')}
+                          className="inline-flex items-center gap-1.5 rounded-control bg-accent px-4 py-2 text-xs font-semibold text-white hover:bg-accent-hover transition-colors shadow-sm"
+                        >
+                          <Terminal className="h-3.5 w-3.5" />
+                          <span>Buka Antigravity Agent Room & Salin Prompt</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <DesignRenderer
+                      schemaDoc={displayedDocument}
+                      selectedNodeId={selectedNodeId}
+                      hoveredNodeId={hoveredNodeId}
+                      onSelectNode={(id) => {
+                        if (canvasState.tool === 'select') {
+                          setSelectedNodeId(id);
+                        }
+                      }}
+                      onHoverNode={(id) => {
+                        if (canvasState.tool === 'select') {
+                          setHoveredNodeId(id);
+                        }
+                      }}
+                      onInlineTextChange={(nodeId, newText) =>
+                        updateNodeById(nodeId, { text: newText })
+                      }
+                      designTokens={designSystem}
+                      interactive={canvasState.tool === 'select'}
+                      artboardRef={artboardRef}
+                      zoom={canvasState.zoom}
+                    />
+
+                    <CanvasSelectionOverlay
+                      artboardRef={artboardRef}
+                      selectedNodeId={selectedNodeId}
+                      hoveredNodeId={hoveredNodeId}
+                      zoom={canvasState.zoom}
+                      activeDocument={displayedDocument}
+                      onResizeNode={(nodeId, updates) => updateNodeById(nodeId, updates)}
+                    />
+                  </>
+                )}
+              </div>
+              </div>
             </div>
           </div>
+
+          {/* 3. Right Panel: Properties Inspector, AI Design Chat & Version History */}
+          {rightPanelOpen && (
+            <aside className="flex w-80 shrink-0 flex-col border-l border-border bg-panel">
+              {/* Contextual Mode Tabs */}
+              <div className="grid grid-cols-3 border-b border-border bg-panel-muted p-1">
+                {[
+                  { id: 'properties', label: 'Properties', icon: Sliders },
+                  { id: 'chat', label: 'AI Chat', icon: Sparkles },
+                  { id: 'versions', label: 'History', icon: History },
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  const active = rightTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setRightTab(tab.id)}
+                      className={`flex items-center justify-center gap-1.5 rounded py-1.5 text-xs font-medium transition-colors ${
+                        active
+                          ? 'bg-panel text-accent shadow-sm'
+                          : 'text-text-secondary hover:text-text-primary'
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      <span>{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Active Right Panel Body */}
+              <div className="flex-1 overflow-y-auto">
+                {rightTab === 'properties' && <PropertiesPanel />}
+                {rightTab === 'chat' && (
+                  <AiDesignChatPanel
+                    onSwitchToAgentRoom={() => setActiveView('agent-room')}
+                    onManualRefreshExchange={handleRefreshExchange}
+                  />
+                )}
+                {rightTab === 'versions' && <VersionHistoryPanel />}
+              </div>
+            </aside>
+          )}
         </div>
-
-        {/* 3. Right Panel: Properties Inspector, AI Design Chat & Version History */}
-        {rightPanelOpen && (
-          <aside className="flex w-80 shrink-0 flex-col border-l border-border bg-panel">
-            {/* Contextual Mode Tabs */}
-            <div className="grid grid-cols-3 border-b border-border bg-panel-muted p-1">
-              {[
-                { id: 'properties', label: 'Properties', icon: Sliders },
-                { id: 'chat', label: 'AI Chat', icon: Sparkles },
-                { id: 'versions', label: 'History', icon: History },
-              ].map((tab) => {
-                const Icon = tab.icon;
-                const active = rightTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setRightTab(tab.id)}
-                    className={`flex items-center justify-center gap-1.5 rounded py-1.5 text-xs font-medium transition-colors ${
-                      active
-                        ? 'bg-panel text-accent shadow-sm'
-                        : 'text-text-secondary hover:text-text-primary'
-                    }`}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Active Right Panel Body */}
-            <div className="flex-1 overflow-y-auto">
-              {rightTab === 'properties' && <PropertiesPanel />}
-              {rightTab === 'chat' && <AiDesignChatPanel />}
-              {rightTab === 'versions' && <VersionHistoryPanel />}
-            </div>
-          </aside>
-        )}
-      </div>
+      )}
 
       {/* Figma Export Compatibility & Clipboard Modal */}
       {showExportModal && (

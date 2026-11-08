@@ -150,6 +150,7 @@ export const PageSchema = z.object({
     height: z.number().min(200).max(7680).default(1024),
   }),
   background: z.string().optional().default('#FFFFFF'),
+  layout: LayoutSchema.optional(),
   children: z.array(LayoraNodeSchema).default([]),
 });
 
@@ -163,6 +164,7 @@ export const DocumentBodySchema = z.object({
   background: z.string().optional().default('#FFFFFF'),
   activePageId: z.string().optional(),
   pages: z.array(PageSchema).optional(),
+  layout: LayoutSchema.optional(),
   children: z.array(LayoraNodeSchema).default([]),
 });
 

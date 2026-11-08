@@ -123,6 +123,13 @@ export function synthesizeSchemaFromBrief({
     lower.includes('article') ||
     lower.includes('knowledge') ||
     lower.includes('api');
+  const isAirQuality =
+    lower.includes('udara') ||
+    lower.includes('aqi') ||
+    lower.includes('polusi') ||
+    lower.includes('pm2.5') ||
+    lower.includes('sensor') ||
+    lower.includes('air quality');
 
   const accentColor =
     designTokens?.colors?.find((c) => c.id === 'token_color_accent')?.value || '#5B63D3';
@@ -406,7 +413,13 @@ export function synthesizeSchemaFromBrief({
                       id: generateNodeId('text'),
                       type: NODE_TYPES.TEXT,
                       name: 'CTA Label',
-                      text: isEcommerce ? 'Checkout Now' : isDocsOrBlog ? 'API Reference' : 'Create Resource',
+                      text: isAirQuality
+                        ? 'Tambah Stasiun Sensor'
+                        : isEcommerce
+                        ? 'Checkout Now'
+                        : isDocsOrBlog
+                        ? 'API Reference'
+                        : 'Create Resource',
                       style: { color: '#FFFFFF' },
                       typography: { fontFamily: 'Inter', fontSize: 13, fontWeight: 500 },
                     },
@@ -458,19 +471,23 @@ export function synthesizeSchemaFromBrief({
                       id: generateNodeId('text'),
                       type: NODE_TYPES.TEXT,
                       name: 'Section Eyebrow',
-                      text: isEcommerce
+                      text: isAirQuality
+                        ? 'REAL-TIME ENVIRONMENTAL TELEMETRY'
+                        : isEcommerce
                         ? 'CURATED CATALOG'
                         : isDocsOrBlog
                         ? 'DEVELOPER DOCUMENTATION'
                         : 'OPERATIONAL WORKSPACE',
-                      style: { color: accentColor },
+                      style: { color: isAirQuality ? '#21845A' : accentColor },
                       typography: { fontFamily: 'Inter', fontSize: 11, fontWeight: 600, letterSpacing: 0.6 },
                     },
                     {
                       id: generateNodeId('text'),
                       type: NODE_TYPES.TEXT,
                       name: 'Primary Heading',
-                      text: titleText,
+                      text: isAirQuality
+                        ? 'Sistem Deteksi & Pemantauan Kualitas Udara'
+                        : titleText,
                       style: { color: textPrimary },
                       typography: { fontFamily: 'Inter', fontSize: 24, fontWeight: 600 },
                     },
@@ -478,9 +495,10 @@ export function synthesizeSchemaFromBrief({
                       id: generateNodeId('text'),
                       type: NODE_TYPES.TEXT,
                       name: 'Supporting Description',
-                      text:
-                        prompt.trim() ||
-                        'Structured interface generated in Layora Design Schema v1.0.0 with editable frames, typography, and layout constraints.',
+                      text: isAirQuality
+                        ? 'Pemantauan indeks kualitas udara (AQI), konsentrasi partikulat PM2.5, PM10, CO2, serta peringatan dini polusi berbasis sensor IoT secara real-time.'
+                        : prompt.trim() ||
+                          'Structured interface generated in Layora Design Schema v1.0.0 with editable frames, typography, and layout constraints.',
                       style: { color: textSecondary },
                       typography: { fontFamily: 'Inter', fontSize: 14, fontWeight: 400, lineHeight: 1.5 },
                     },
@@ -502,26 +520,44 @@ export function synthesizeSchemaFromBrief({
                     heightMode: 'HUG',
                   },
                   style: {},
-                  children: [
-                    {
-                      title: isEcommerce ? 'Featured Product Tier' : 'System Performance',
-                      metric: isEcommerce ? '$249.00' : '99.94%',
-                      caption: 'Updated in real-time with schema-level precision.',
-                    },
-                    {
-                      title: isEcommerce ? 'Active Inventory' : 'Throughput Capacity',
-                      metric: isEcommerce ? '1,420 Units' : '14.2k req/s',
-                      caption: 'Verified across active regional endpoints.',
-                    },
-                    {
-                      title: isEcommerce ? 'Customer Satisfaction' : 'Active Integrations',
-                      metric: isEcommerce ? '4.92 / 5.0' : '18 Connected',
-                      caption:
-                        references.length > 0
-                          ? `Context informed by ${references.length} attached project reference(s).`
-                          : 'Ready for direct inspection and Figma export.',
-                    },
-                  ].map((item, idx) => ({
+                  children: (isAirQuality
+                    ? [
+                        {
+                          title: 'Indeks Kualitas Udara (AQI)',
+                          metric: '42 — Baik (Sehat)',
+                          caption: 'Udara bersih, aman untuk aktivitas luar ruangan.',
+                        },
+                        {
+                          title: 'Partikulat Halus (PM2.5)',
+                          metric: '11.8 µg/m³',
+                          caption: 'Di bawah ambang batas WHO (15 µg/m³).',
+                        },
+                        {
+                          title: 'Kadar CO2 & Kelembaban',
+                          metric: '408 ppm • 62% RH',
+                          caption: '24 stasiun sensor IoT aktif mengirimkan telemetri.',
+                        },
+                      ]
+                    : [
+                        {
+                          title: isEcommerce ? 'Featured Product Tier' : 'System Performance',
+                          metric: isEcommerce ? '$249.00' : '99.94%',
+                          caption: 'Updated in real-time with schema-level precision.',
+                        },
+                        {
+                          title: isEcommerce ? 'Active Inventory' : 'Throughput Capacity',
+                          metric: isEcommerce ? '1,420 Units' : '14.2k req/s',
+                          caption: 'Verified across active regional endpoints.',
+                        },
+                        {
+                          title: isEcommerce ? 'Customer Satisfaction' : 'Active Integrations',
+                          metric: isEcommerce ? '4.92 / 5.0' : '18 Connected',
+                          caption:
+                            references.length > 0
+                              ? `Context informed by ${references.length} attached project reference(s).`
+                              : 'Ready for direct inspection and Figma export.',
+                        },
+                      ]).map((item, idx) => ({
                     id: generateNodeId('frame'),
                     type: NODE_TYPES.FRAME,
                     name: `Card ${idx + 1} — ${item.title}`,
@@ -596,6 +632,32 @@ export function applyDeterministicRevision({
   const lower = String(instruction).toLowerCase();
   const affectedNodes = [];
   const changesSummary = [];
+
+  // Full screen regeneration if user requests a full design / buat desain / kualitas udara
+  if (
+    lower.includes('buatkan') ||
+    lower.includes('generate') ||
+    lower.includes('desain penuh') ||
+    lower.includes('kualitas udara') ||
+    lower.includes('aqi')
+  ) {
+    const regenerated = synthesizeSchemaFromBrief({
+      prompt: instruction,
+      projectName: next.document.name || 'Generated Design',
+      platform: next.document.viewport?.width <= 480 ? 'Mobile' : 'Web',
+      viewport: next.document.viewport || { width: 1440, height: 1024 },
+    });
+    regenerated.document.id = next.document.id;
+    return {
+      updatedDocument: regenerated,
+      affectedNodes: regenerated.document.children.map((c) => ({
+        id: c.id,
+        name: c.name,
+        type: c.type,
+      })),
+      summary: `Menghasilkan struktur layar penuh untuk "${instruction}" dalam Layora Design Schema v1.0.0.`,
+    };
+  }
 
   const targetRoot =
     scope === 'selected' && selectedNodeId

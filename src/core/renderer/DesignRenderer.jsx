@@ -391,18 +391,36 @@ export default function DesignRenderer({
   const viewport = doc.viewport || { width: 1440, height: 1024 };
   const children = doc.children || [];
 
+  const isHorizontalFlow = doc.layout?.mode === 'HORIZONTAL' || (Number(viewport.width) > 2400);
+  const rootLayoutMode = isHorizontalFlow ? 'HORIZONTAL' : (doc.layout?.mode || 'VERTICAL');
+  const rootGap = doc.layout?.gap ?? 64;
+  const pad = doc.layout?.padding
+    ? resolvePadding(doc.layout.padding)
+    : isHorizontalFlow
+    ? { top: 48, right: 48, bottom: 48, left: 48 }
+    : { top: 0, right: 0, bottom: 0, left: 0 };
+
   return (
     <div
       ref={artboardRef}
       data-layora-artboard="true"
       data-canvas-zoom={zoom}
-      className="layora-artboard-isolation relative shadow-sm"
+      className="layora-artboard-isolation relative rounded-sm"
       style={{
         width: `${viewport.width}px`,
         minHeight: `${viewport.height}px`,
-        backgroundColor: doc.background || '#FFFFFF',
+        backgroundColor: doc.background || '#0F172A',
         position: 'relative',
+        boxShadow: '0 20px 60px -15px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.12)',
         overflow: 'hidden',
+        display: isHorizontalFlow ? 'flex' : 'block',
+        flexDirection: isHorizontalFlow ? 'row' : 'column',
+        alignItems: 'flex-start',
+        gap: isHorizontalFlow ? `${rootGap}px` : undefined,
+        paddingTop: `${pad.top}px`,
+        paddingRight: `${pad.right}px`,
+        paddingBottom: `${pad.bottom}px`,
+        paddingLeft: `${pad.left}px`,
       }}
       onClick={(e) => {
         if (!interactive) return;
@@ -415,7 +433,7 @@ export default function DesignRenderer({
         <NodeElement
           key={child.id}
           node={child}
-          parentLayoutMode="VERTICAL"
+          parentLayoutMode={rootLayoutMode}
           selectedNodeId={selectedNodeId}
           hoveredNodeId={hoveredNodeId}
           onSelectNode={onSelectNode}

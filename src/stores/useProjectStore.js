@@ -165,6 +165,7 @@ export const useProjectStore = create((set, get) => ({
   },
 
   createProject: async ({
+    id: customId = null,
     name,
     description = '',
     platform = 'Web',
@@ -174,8 +175,9 @@ export const useProjectStore = create((set, get) => ({
     generationMode = 'scratch',
     initialDocument = null,
     sourceReport = null,
+    bridgeExchange = null,
   }) => {
-    const projectId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const projectId = customId || `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const documentId = `doc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const now = new Date().toISOString();
 
@@ -197,12 +199,14 @@ export const useProjectStore = create((set, get) => ({
       generationMode,
       documentId,
       sourceReport: sourceReport || null,
+      bridgeExchange: bridgeExchange || null,
       createdAt: now,
       updatedAt: now,
       lastTaskStatus: 'Completed',
     };
 
     await dbPut(STORES.DOCUMENTS, { id: documentId, schema: docSchema });
+    await dbPut(STORES.PROJECTS, newProject);
     await dbPut(STORES.PROJECTS, newProject);
 
     const initialVersion = {

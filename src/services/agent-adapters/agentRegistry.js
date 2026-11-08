@@ -652,9 +652,24 @@ export async function executeAgentGeneration({
       }
     }
 
-    throw new Error(
-      `${agentConfig.name} requires either an active CLI session in Local Bridge or using the Prompt Handoff modal to paste the external agent's JSON output.`
-    );
+    // Fallback to synthesized initial blueprint while preparing External Handoff in Workspace
+    const fallbackSynthesized = synthesizeSchemaFromBrief({
+      prompt,
+      projectName,
+      platform,
+      viewport,
+      references,
+      designTokens,
+    });
+    onStageChange('Validating');
+    const validation = normalizeAndValidateSchema(fallbackSynthesized);
+    onStageChange('Completed');
+    return {
+      document: validation.document,
+      diagnostics: validation.diagnostics,
+      agentUsed: `${agentConfig.name} (Workspace Handoff Ready)`,
+      handoffPrompt: `${systemPrompt}\n\n${userPrompt}`,
+    };
   }
 
   throw new Error('Unsupported agent configuration.');

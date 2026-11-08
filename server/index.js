@@ -86,8 +86,593 @@ async function detectAllowlistedBinaries() {
 }
 
 // ============================================================================
-// LOCAL BRIDGE ROUTES (/bridge/*)
+// FILE-BASED AGENT EXCHANGE BRIDGE (.layora/projects/<projectId>/... or <sourcePath>/.layora/...)
 // ============================================================================
+
+const EXCHANGE_BASE_DIR = path.resolve(process.cwd(), '.layora', 'projects');
+const PROJECTS_MAP_FILE = path.join(process.cwd(), '.layora', 'projects_map.json');
+
+async function loadProjectDirectoryMap() {
+  try {
+    const raw = await fs.readFile(PROJECTS_MAP_FILE, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+async function saveProjectDirectoryMap(map) {
+  try {
+    await fs.mkdir(path.dirname(PROJECTS_MAP_FILE), { recursive: true });
+    await fs.writeFile(PROJECTS_MAP_FILE, JSON.stringify(map, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('Could not save project directory map:', e.message);
+  }
+}
+
+async function resolveProjectPaths(projectId, candidateSourcePath = null) {
+  const map = await loadProjectDirectoryMap();
+  let projectDir = null;
+  let sourceRoot = null;
+
+  // 1. If explicit candidateSourcePath provided and is a valid directory
+  if (candidateSourcePath && typeof candidateSourcePath === 'string' && candidateSourcePath.trim()) {
+    const clean = path.resolve(candidateSourcePath.trim());
+    try {
+      const st = await fs.stat(clean);
+      if (st.isDirectory()) {
+        sourceRoot = clean;
+        projectDir = path.join(clean, '.layora');
+      }
+    } catch {
+      // not accessible dir
+    }
+  }
+
+  // 2. Otherwise check stored mapping
+  if (!projectDir && map[projectId]) {
+    const stored = map[projectId];
+    const candidateDir = typeof stored === 'string' ? stored : stored.projectDir;
+    try {
+      const st = await fs.stat(candidateDir);
+      if (st.isDirectory()) {
+        projectDir = candidateDir;
+        sourceRoot = typeof stored === 'object' && stored.sourceRoot ? stored.sourceRoot : path.dirname(candidateDir);
+      }
+    } catch {
+      // dir might have been removed
+    }
+  }
+
+  // 3. Fallback to process.cwd()/.layora/projects/<projectId>
+  if (!projectDir) {
+    projectDir = path.join(EXCHANGE_BASE_DIR, projectId);
+    sourceRoot = process.cwd();
+  }
+
+  const inputPath = path.join(projectDir, 'input_context.json');
+  const outputPath = path.join(projectDir, 'design_output.json');
+
+  let relativeInputPath;
+  let relativeOutputPath;
+  const normSource = sourceRoot ? path.resolve(sourceRoot).toLowerCase() : null;
+  const normInput = path.resolve(inputPath).toLowerCase();
+  const normOutput = path.resolve(outputPath).toLowerCase();
+
+  if (normSource && normInput.startsWith(normSource)) {
+    relativeInputPath = path.relative(sourceRoot, inputPath).replace(/\\/g, '/');
+    relativeOutputPath = path.relative(sourceRoot, outputPath).replace(/\\/g, '/');
+  } else {
+    relativeInputPath = path.relative(process.cwd(), inputPath).replace(/\\/g, '/');
+    relativeOutputPath = path.relative(process.cwd(), outputPath).replace(/\\/g, '/');
+  }
+
+  return {
+    projectDir,
+    sourceRoot,
+    inputPath,
+    outputPath,
+    relativeInputPath,
+    relativeOutputPath,
+    isExternalDir: sourceRoot !== process.cwd(),
+  };
+}
+
+app.post('/bridge/init-exchange', async (req, res) => {
+  const {
+    projectId,
+    projectName,
+    platform,
+    viewport,
+    generationMode,
+    prompt,
+    sourcePath,
+    sourceCodeAnalysis,
+    designTokens,
+    references,
+  } = req.body || {};
+
+  if (!projectId) {
+    return res.status(400).json({ error: 'projectId is required' });
+  }
+
+  try {
+    const {
+      projectDir,
+      sourceRoot,
+      inputPath,
+      outputPath,
+      relativeInputPath,
+      relativeOutputPath,
+      isExternalDir,
+    } = await resolveProjectPaths(projectId, sourcePath);
+
+    await fs.mkdir(projectDir, { recursive: true });
+
+    // Store in mapping so subsequent requests know where to find files
+    const map = await loadProjectDirectoryMap();
+    map[projectId] = { projectDir, sourceRoot, sourcePath: sourcePath || sourceRoot };
+    await saveProjectDirectoryMap(map);
+
+    // Also mirror to EXCHANGE_BASE_DIR/projectId as fallback backup
+    const backupDir = path.join(EXCHANGE_BASE_DIR, projectId);
+    await fs.mkdir(backupDir, { recursive: true });
+
+    const inputContext = {
+      projectId,
+      projectName: projectName || 'Untitled Project',
+      platform: platform || 'Web',
+      viewport: viewport || { width: 1440, height: 1024 },
+      generationMode: generationMode || 'scratch',
+      userPrompt: prompt || '',
+      sourcePath: sourcePath || sourceRoot || '',
+      sourceCodeAnalysis: sourceCodeAnalysis || null,
+      designTokens: designTokens || null,
+      references: references || [],
+      updatedAt: new Date().toISOString(),
+      schemaSpecification: {
+        schemaVersion: '1.0.0',
+        rootFormat: {
+          schemaVersion: '1.0.0',
+          document: {
+            id: 'string (e.g. doc_root)',
+            name: projectName || 'Untitled Project',
+            viewport: viewport || { width: 1440, height: 1024 },
+            background: '#F8FAFC',
+            children: ['Array of top-level FRAME nodes'],
+          },
+        },
+        supportedNodeTypes: [
+          'FRAME (containers, cards, bars, flex columns/rows)',
+          'TEXT (typography, headings, labels, metrics, badges)',
+          'RECTANGLE (shapes, dividers, visual accents)',
+          'ELLIPSE (avatars, status dots, icon containers)',
+          'IMAGE (photos, screenshots, external image URLs)',
+          'VECTOR (icons, simple geometric SVG paths)',
+          'GROUP (logical groupings)',
+          'COMPONENT_INSTANCE (reusable UI elements)',
+        ],
+        layoutFlexboxRules: {
+          mode: 'VERTICAL | HORIZONTAL | NONE',
+          gap: 'number (e.g. 12, 16, 24)',
+          padding: 'number or { top, right, bottom, left }',
+          alignment: 'START | CENTER | END | SPACE_BETWEEN',
+          crossAlignment: 'START | CENTER | END | STRETCH',
+        },
+      },
+      instructionsForAntigravity: [
+        `1. Baca seluruh konteks di file ini: ${inputPath}`,
+        sourceRoot ? `2. Kode sumber referensi proyek berada di direktori: ${sourceRoot}` : '2. Gunakan konteks UI di atas',
+        '3. Buatkan 1 single master canvas dalam Layora Design Schema v1.0.0 JSON yang valid mencakup seluruh halaman dan komponen (Navbar, Hero, Telemetry, History Table, dan Admin).',
+        `4. Tulis hasil akhir langsung ke file output: ${outputPath}`,
+        '5. Website Layora sedang memantau file tersebut dan akan langsung merender kanvas secara real-time saat file tersimpan.',
+      ],
+      suggestedAntigravityPrompt: `Halo Antigravity! Tolong baca spesifikasi proyek Layora di file ini:
+${inputPath}
+
+Berdasarkan seluruh kode sumber di folder ${sourceRoot || sourcePath}, buatkan desain UI/UX lengkap dalam format Layora Design Schema v1.0.0 (1 single master canvas berdimensi 1440 × 2600 px berisi semua section: Navbar, Hero, Core Telemetry, History Table, dan Admin), lalu simpan hasilnya langsung ke file output:
+${outputPath}
+
+Pastikan struktur JSON valid: { "schemaVersion": "1.0.0", "document": { ... } }.`,
+    };
+
+    const inputJsonStr = JSON.stringify(inputContext, null, 2);
+    await fs.writeFile(inputPath, inputJsonStr, 'utf-8');
+    if (projectDir !== backupDir) {
+      await fs.writeFile(path.join(backupDir, 'input_context.json'), inputJsonStr, 'utf-8').catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      projectId,
+      projectDir,
+      sourceRoot,
+      inputPath,
+      outputPath,
+      relativeInputPath,
+      relativeOutputPath,
+      inputContext,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: `Failed to initialize exchange: ${err.message}` });
+  }
+});
+
+app.get('/bridge/project-exchange/:projectId', async (req, res) => {
+  const { projectId } = req.params;
+  try {
+    const {
+      projectDir,
+      sourceRoot,
+      inputPath,
+      outputPath,
+      relativeInputPath,
+      relativeOutputPath,
+    } = await resolveProjectPaths(projectId);
+
+    // Also check backup dir in case file exists there
+    const backupDir = path.join(EXCHANGE_BASE_DIR, projectId);
+    const backupInput = path.join(backupDir, 'input_context.json');
+    const backupOutput = path.join(backupDir, 'design_output.json');
+
+    let resolvedInput = inputPath;
+    let inputExists = await fs.stat(inputPath).then(() => true).catch(() => false);
+    if (!inputExists) {
+      const backupInputExists = await fs.stat(backupInput).then(() => true).catch(() => false);
+      if (backupInputExists) {
+        inputExists = true;
+        resolvedInput = backupInput;
+      }
+    }
+
+    let resolvedOutput = outputPath;
+    let outputExists = await fs.stat(outputPath).then(() => true).catch(() => false);
+    if (!outputExists) {
+      const backupOutputExists = await fs.stat(backupOutput).then(() => true).catch(() => false);
+      if (backupOutputExists) {
+        outputExists = true;
+        resolvedOutput = backupOutput;
+      }
+    }
+
+    let inputContext = null;
+    if (inputExists) {
+      try {
+        const rawInput = await fs.readFile(resolvedInput, 'utf-8');
+        inputContext = JSON.parse(rawInput);
+      } catch {
+        // ignore parsing err
+      }
+    }
+
+    let outputDoc = null;
+    let lastModified = null;
+    let nodeCount = 0;
+
+    if (outputExists) {
+      const stat = await fs.stat(resolvedOutput);
+      lastModified = stat.mtime.toISOString();
+      const rawText = await fs.readFile(resolvedOutput, 'utf-8');
+      if (rawText.trim()) {
+        try {
+          outputDoc = JSON.parse(rawText);
+          const countNodes = (node) => {
+            if (!node) return 0;
+            let c = 1;
+            if (Array.isArray(node.children)) {
+              for (const child of node.children) c += countNodes(child);
+            }
+            return c;
+          };
+          if (outputDoc?.document?.children) {
+            nodeCount = outputDoc.document.children.reduce((acc, n) => acc + countNodes(n), 0);
+          }
+        } catch {
+          // If in the middle of being written, return raw or null
+        }
+      }
+    }
+
+    return res.json({
+      projectId,
+      inputExists,
+      outputExists,
+      lastModified,
+      nodeCount,
+      inputPath: resolvedInput,
+      outputPath: resolvedOutput,
+      relativeInputPath,
+      relativeOutputPath,
+      sourceRoot,
+      inputContext,
+      document: outputDoc,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/bridge/simulate-output/:projectId', async (req, res) => {
+  const { projectId } = req.params;
+  try {
+    const { projectDir, inputPath, outputPath } = await resolveProjectPaths(projectId);
+    await fs.mkdir(projectDir, { recursive: true });
+
+    let inputContext = null;
+    try {
+      const raw = await fs.readFile(inputPath, 'utf-8');
+      inputContext = JSON.parse(raw);
+    } catch {
+      // ignore
+    }
+
+    const title = inputContext?.projectName || 'Air Quality Monitoring Dashboard';
+    const viewport = inputContext?.viewport || { width: 1440, height: 1024 };
+
+    const simulatedSchema = {
+      schemaVersion: '1.0.0',
+      document: {
+        id: `doc_${projectId}`,
+        name: title,
+        viewport,
+        background: '#0F172A',
+        children: [
+          {
+            id: 'navbar_root',
+            type: 'FRAME',
+            name: 'Navigation Bar',
+            width: '100%',
+            height: 68,
+            layout: {
+              mode: 'HORIZONTAL',
+              alignment: 'SPACE_BETWEEN',
+              crossAlignment: 'CENTER',
+              padding: { top: 16, right: 32, bottom: 16, left: 32 },
+            },
+            style: {
+              background: '#1E293B',
+              border: { width: 1, color: '#334155', style: 'solid' },
+            },
+            children: [
+              {
+                id: 'brand_title',
+                type: 'TEXT',
+                name: 'Brand Title',
+                text: `${title} · Layora AI Live Sync`,
+                style: {
+                  fontSize: 18,
+                  fontWeight: '700',
+                  color: '#38BDF8',
+                  fontFamily: 'Inter',
+                },
+              },
+              {
+                id: 'status_badge',
+                type: 'TEXT',
+                name: 'Status Badge',
+                text: '🟢 Real-time Agent Synced',
+                style: {
+                  fontSize: 12,
+                  fontWeight: '600',
+                  color: '#4ADE80',
+                  background: 'rgba(74, 222, 128, 0.12)',
+                  padding: { top: 6, right: 12, bottom: 6, left: 12 },
+                  borderRadius: 20,
+                  fontFamily: 'Inter',
+                },
+              },
+            ],
+          },
+          {
+            id: 'metrics_row',
+            type: 'FRAME',
+            name: 'Metrics Overview',
+            width: '100%',
+            layout: {
+              mode: 'HORIZONTAL',
+              gap: 20,
+              alignment: 'START',
+              crossAlignment: 'STRETCH',
+              padding: { top: 24, right: 32, bottom: 20, left: 32 },
+            },
+            style: { background: 'transparent' },
+            children: [
+              {
+                id: 'card_aqi',
+                type: 'FRAME',
+                name: 'AQI Index Card',
+                width: 320,
+                layout: { mode: 'VERTICAL', gap: 10, padding: 20 },
+                style: {
+                  background: '#1E293B',
+                  borderRadius: 12,
+                  border: { width: 1, color: '#334155', style: 'solid' },
+                },
+                children: [
+                  {
+                    id: 'aqi_label',
+                    type: 'TEXT',
+                    name: 'AQI Label',
+                    text: 'Indeks Kualitas Udara (AQI)',
+                    style: { fontSize: 13, color: '#94A3B8', fontWeight: '500' },
+                  },
+                  {
+                    id: 'aqi_value',
+                    type: 'TEXT',
+                    name: 'AQI Value',
+                    text: '42 · Sehat',
+                    style: { fontSize: 32, color: '#4ADE80', fontWeight: '700' },
+                  },
+                ],
+              },
+              {
+                id: 'card_pm25',
+                type: 'FRAME',
+                name: 'PM2.5 Card',
+                width: 320,
+                layout: { mode: 'VERTICAL', gap: 10, padding: 20 },
+                style: {
+                  background: '#1E293B',
+                  borderRadius: 12,
+                  border: { width: 1, color: '#334155', style: 'solid' },
+                },
+                children: [
+                  {
+                    id: 'pm25_label',
+                    type: 'TEXT',
+                    name: 'PM2.5 Label',
+                    text: 'Partikel PM2.5 (ug/m3)',
+                    style: { fontSize: 13, color: '#94A3B8', fontWeight: '500' },
+                  },
+                  {
+                    id: 'pm25_value',
+                    type: 'TEXT',
+                    name: 'PM2.5 Value',
+                    text: '12.4 ug/m3',
+                    style: { fontSize: 32, color: '#38BDF8', fontWeight: '700' },
+                  },
+                ],
+              },
+              {
+                id: 'card_co2',
+                type: 'FRAME',
+                name: 'CO2 Card',
+                width: 320,
+                layout: { mode: 'VERTICAL', gap: 10, padding: 20 },
+                style: {
+                  background: '#1E293B',
+                  borderRadius: 12,
+                  border: { width: 1, color: '#334155', style: 'solid' },
+                },
+                children: [
+                  {
+                    id: 'co2_label',
+                    type: 'TEXT',
+                    name: 'CO2 Label',
+                    text: 'Konsentrasi CO2 (ppm)',
+                    style: { fontSize: 13, color: '#94A3B8', fontWeight: '500' },
+                  },
+                  {
+                    id: 'co2_value',
+                    type: 'TEXT',
+                    name: 'CO2 Value',
+                    text: '418 ppm',
+                    style: { fontSize: 32, color: '#FBBF24', fontWeight: '700' },
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            id: 'sensor_table_frame',
+            type: 'FRAME',
+            name: 'Sensor Stations Table',
+            width: '100%',
+            layout: {
+              mode: 'VERTICAL',
+              gap: 12,
+              padding: { top: 20, right: 32, bottom: 32, left: 32 },
+            },
+            style: {
+              background: '#1E293B',
+              borderRadius: 12,
+              border: { width: 1, color: '#334155', style: 'solid' },
+            },
+            children: [
+              {
+                id: 'table_title',
+                type: 'TEXT',
+                name: 'Table Title',
+                text: 'Daftar Stasiun Pemantauan Udara Regional',
+                style: { fontSize: 16, fontWeight: '600', color: '#F8FAFC' },
+              },
+              {
+                id: 'table_row_1',
+                type: 'FRAME',
+                name: 'Row 1',
+                width: '100%',
+                layout: {
+                  mode: 'HORIZONTAL',
+                  alignment: 'SPACE_BETWEEN',
+                  crossAlignment: 'CENTER',
+                  padding: 12,
+                },
+                style: {
+                  background: '#0F172A',
+                  borderRadius: 8,
+                },
+                children: [
+                  {
+                    id: 'station_name_1',
+                    type: 'TEXT',
+                    name: 'Station 1',
+                    text: 'Stasiun Pusat Bandar Lampung',
+                    style: { fontSize: 14, color: '#F1F5F9', fontWeight: '500' },
+                  },
+                  {
+                    id: 'station_stat_1',
+                    type: 'TEXT',
+                    name: 'Status 1',
+                    text: 'AQI 38 · Baik',
+                    style: { fontSize: 13, color: '#4ADE80', fontWeight: '600' },
+                  },
+                ],
+              },
+              {
+                id: 'table_row_2',
+                type: 'FRAME',
+                name: 'Row 2',
+                width: '100%',
+                layout: {
+                  mode: 'HORIZONTAL',
+                  alignment: 'SPACE_BETWEEN',
+                  crossAlignment: 'CENTER',
+                  padding: 12,
+                },
+                style: {
+                  background: '#0F172A',
+                  borderRadius: 8,
+                },
+                children: [
+                  {
+                    id: 'station_name_2',
+                    type: 'TEXT',
+                    name: 'Station 2',
+                    text: 'Stasiun Industri Teluk Betung',
+                    style: { fontSize: 14, color: '#F1F5F9', fontWeight: '500' },
+                  },
+                  {
+                    id: 'station_stat_2',
+                    type: 'TEXT',
+                    name: 'Status 2',
+                    text: 'AQI 72 · Sedang',
+                    style: { fontSize: 13, color: '#FBBF24', fontWeight: '600' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    await fs.writeFile(outputPath, JSON.stringify(simulatedSchema, null, 2), 'utf-8');
+    const backupDir = path.join(EXCHANGE_BASE_DIR, projectId);
+    if (projectDir !== backupDir) {
+      await fs.mkdir(backupDir, { recursive: true });
+      await fs.writeFile(path.join(backupDir, 'design_output.json'), JSON.stringify(simulatedSchema, null, 2), 'utf-8').catch(() => {});
+    }
+
+    return res.json({
+      success: true,
+      message: 'Simulated Antigravity output written to design_output.json',
+      outputPath,
+      schema: simulatedSchema,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/bridge/status', async (_req, res) => {
   const detectedAgents = await detectAllowlistedBinaries();

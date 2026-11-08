@@ -94,7 +94,10 @@ export function analyzeSourceFilesMap(filesMap, sourceLabel = 'Source Project', 
         const headings = [];
         const textMatches = content.match(/<(?:h1|h2|h3|title|button)[^>]*>([^<{]+)<\//gi) || [];
         textMatches.slice(0, 5).forEach((m) => {
-          const inner = m.replace(/<[^>]+>/g, '').trim();
+          const inner = m
+            .replace(/<\/?[^>]+(>|$)/g, '')
+            .replace(/<\/$/, '')
+            .trim();
           if (inner && inner.length > 1) headings.push(inner);
         });
 
@@ -147,18 +150,41 @@ export function analyzeSourceFilesMap(filesMap, sourceLabel = 'Source Project', 
   );
 
   // 3. Reconstruct into Layora Design Schema v1
-  const primaryAccent = report.extractedColors.find((c) => c !== '#FFFFFF' && c !== '#000000') || '#5B63D3';
+  const primaryAccent =
+    report.extractedColors.find(
+      (c) =>
+        c !== '#FFFFFF' &&
+        c !== '#000000' &&
+        c !== '#C44949' &&
+        c !== '#EF7777' &&
+        c !== '#DC2626'
+    ) || '#5B63D3';
 
   const buildPageNodesForRoute = (routeInfo) => {
-    const primaryTitle = routeInfo.headings?.[0] || `${routeInfo.routeName} Screen`;
-    const subHeadings = routeInfo.headings?.slice(1) || [];
+    // Clean raw HTML tags if any were in the heading
+    const rawTitle = routeInfo.headings?.[0] || routeInfo.routeName;
+    const cleanTitle = rawTitle
+      .replace(/<\/?[^>]+(>|$)/g, '')
+      .replace(/[\/\\<>]/g, '')
+      .replace(/—\s*AI Design Workspace/i, '')
+      .trim() || `${routeInfo.routeName}`;
+
+    const displayTitle =
+      cleanTitle.length > 2
+        ? cleanTitle
+        : `${sourceLabel} — ${routeInfo.routeName}`;
+
     const topComponents = report.discoveredComponents.slice(0, 6);
+    const cardSurface = '#FFFFFF';
+    const borderColor = '#E2E8F0';
+    const textPrimary = '#0F172A';
+    const textSecondary = '#64748B';
 
     return [
       {
         id: generateNodeId('frame'),
         type: NODE_TYPES.FRAME,
-        name: `${routeInfo.routeName} — Root Layout`,
+        name: `${routeInfo.routeName} — Artboard`,
         width: viewport.width,
         height: viewport.height,
         layout: {
@@ -172,70 +198,106 @@ export function analyzeSourceFilesMap(filesMap, sourceLabel = 'Source Project', 
         },
         style: { background: '#F8FAFC' },
         children: [
-          // Reconstructed Header
+          // 1. Polished App Header Navigation Bar
           {
             id: generateNodeId('frame'),
             type: NODE_TYPES.FRAME,
-            name: 'Reconstructed Header Navigation',
+            name: 'Navigation Bar',
             width: 'FILL',
             height: 64,
             layout: {
               mode: 'HORIZONTAL',
-              gap: 20,
-              padding: { top: 14, right: 32, bottom: 14, left: 32 },
+              gap: 24,
+              padding: { top: 12, right: 36, bottom: 12, left: 36 },
               alignment: 'SPACE_BETWEEN',
               crossAlignment: 'CENTER',
               widthMode: 'FILL',
               heightMode: 'FIXED',
             },
             style: {
-              background: '#FFFFFF',
-              borderColor: '#E2E8F0',
-              borderWidth: 1,
+              background: '#0F172A',
             },
             children: [
               {
                 id: generateNodeId('frame'),
                 type: NODE_TYPES.FRAME,
-                name: 'Source Brand Group',
+                name: 'Brand & Title Group',
                 width: 'HUG',
                 height: 'HUG',
-                layout: { mode: 'HORIZONTAL', gap: 10, padding: 0, alignment: 'START', crossAlignment: 'CENTER' },
-                style: {},
+                layout: { mode: 'HORIZONTAL', gap: 12, padding: 0, alignment: 'START', crossAlignment: 'CENTER' },
                 children: [
                   {
                     id: generateNodeId('rect'),
                     type: NODE_TYPES.RECTANGLE,
-                    name: 'Framework Badge Icon',
-                    width: 24,
-                    height: 24,
+                    name: 'Brand Logo Icon',
+                    width: 26,
+                    height: 26,
                     style: { background: primaryAccent, borderRadius: 6 },
                   },
                   {
                     id: generateNodeId('text'),
                     type: NODE_TYPES.TEXT,
-                    name: 'Project Name',
-                    text: `${sourceLabel} (${report.framework})`,
-                    style: { color: '#0F172A' },
-                    typography: { fontFamily: 'Inter', fontSize: 14, fontWeight: 600 },
+                    name: 'Brand App Title',
+                    text: sourceLabel,
+                    style: { color: '#FFFFFF' },
+                    typography: { fontFamily: 'Inter', fontSize: 15, fontWeight: 600 },
                   },
                 ],
               },
               {
-                id: generateNodeId('text'),
-                type: NODE_TYPES.TEXT,
-                name: 'Source File Path Tag',
-                text: `Source: ${routeInfo.filePath}`,
-                style: { color: '#64748B' },
-                typography: { fontFamily: 'Inter', fontSize: 12, fontWeight: 500 },
+                id: generateNodeId('frame'),
+                type: NODE_TYPES.FRAME,
+                name: 'Header Actions & Profile',
+                width: 'HUG',
+                height: 'HUG',
+                layout: { mode: 'HORIZONTAL', gap: 12, padding: 0, alignment: 'END', crossAlignment: 'CENTER' },
+                children: [
+                  {
+                    id: generateNodeId('comp'),
+                    type: NODE_TYPES.COMPONENT_INSTANCE,
+                    name: 'Primary Action CTA',
+                    componentId: 'comp_button_primary',
+                    width: 'HUG',
+                    height: 'HUG',
+                    layout: {
+                      mode: 'HORIZONTAL',
+                      gap: 8,
+                      padding: { top: 8, right: 16, bottom: 8, left: 16 },
+                      alignment: 'CENTER',
+                      crossAlignment: 'CENTER',
+                    },
+                    style: {
+                      background: primaryAccent,
+                      borderRadius: 6,
+                    },
+                    children: [
+                      {
+                        id: generateNodeId('text'),
+                        type: NODE_TYPES.TEXT,
+                        name: 'CTA Label',
+                        text: 'Dashboard Action',
+                        style: { color: '#FFFFFF' },
+                        typography: { fontFamily: 'Inter', fontSize: 12, fontWeight: 600 },
+                      },
+                    ],
+                  },
+                  {
+                    id: generateNodeId('ellipse'),
+                    type: NODE_TYPES.ELLIPSE,
+                    name: 'User Avatar',
+                    width: 32,
+                    height: 32,
+                    style: { background: '#334155' },
+                  },
+                ],
               },
             ],
           },
-          // Reconstructed Body
+          // 2. Main Page Layout Body
           {
             id: generateNodeId('frame'),
             type: NODE_TYPES.FRAME,
-            name: 'Reconstructed Route Body',
+            name: 'Page Content Area',
             width: 'FILL',
             height: 'FILL',
             layout: {
@@ -247,12 +309,12 @@ export function analyzeSourceFilesMap(filesMap, sourceLabel = 'Source Project', 
               widthMode: 'FILL',
               heightMode: 'FILL',
             },
-            style: {},
             children: [
+              // Hero / Overview Banner Card
               {
                 id: generateNodeId('frame'),
                 type: NODE_TYPES.FRAME,
-                name: 'Route Header Card',
+                name: 'Page Header Card',
                 width: 'FILL',
                 height: 'HUG',
                 layout: {
@@ -265,136 +327,196 @@ export function analyzeSourceFilesMap(filesMap, sourceLabel = 'Source Project', 
                   heightMode: 'HUG',
                 },
                 style: {
-                  background: '#FFFFFF',
-                  borderColor: '#E2E8F0',
+                  background: cardSurface,
+                  borderColor,
                   borderWidth: 1,
-                  borderRadius: 10,
+                  borderRadius: 12,
                 },
                 children: [
                   {
                     id: generateNodeId('text'),
                     type: NODE_TYPES.TEXT,
-                    name: 'Route Eyebrow',
-                    text: `RECONSTRUCTED ROUTE • ${report.stylingSystem.toUpperCase()}`,
+                    name: 'Category Tag',
+                    text: 'ACTIVE APPLICATION WORKSPACE',
                     style: { color: primaryAccent },
-                    typography: { fontFamily: 'Inter', fontSize: 11, fontWeight: 600, letterSpacing: 0.5 },
+                    typography: { fontFamily: 'Inter', fontSize: 11, fontWeight: 600, letterSpacing: 0.6 },
                   },
                   {
                     id: generateNodeId('text'),
                     type: NODE_TYPES.TEXT,
-                    name: 'Route Primary Heading',
-                    text: primaryTitle,
-                    style: { color: '#0F172A' },
+                    name: 'Page Title Heading',
+                    text: displayTitle,
+                    style: { color: textPrimary },
                     typography: { fontFamily: 'Inter', fontSize: 22, fontWeight: 600 },
                   },
                   {
                     id: generateNodeId('text'),
                     type: NODE_TYPES.TEXT,
-                    name: 'Route Summary',
-                    text:
-                      subHeadings.length > 0
-                        ? `Detected sections: ${subHeadings.join(' • ')}`
-                        : `Reconstructed from ${report.totalFiles} source files with ${report.discoveredComponents.length} discovered UI components.`,
-                    style: { color: '#64748B' },
+                    name: 'Page Description',
+                    text: 'Komponen visual dan alur antarmuka yang siap diatur, disesuaikan di visual editor, dan disalin ke Figma.',
+                    style: { color: textSecondary },
                     typography: { fontFamily: 'Inter', fontSize: 13, fontWeight: 400 },
                   },
                 ],
               },
+              // Feature / Metric Summary Cards Grid
               {
                 id: generateNodeId('frame'),
                 type: NODE_TYPES.FRAME,
-                name: 'Discovered Component Tree Grid',
+                name: 'Key Metrics Grid',
                 width: 'FILL',
                 height: 'HUG',
                 layout: {
                   mode: 'HORIZONTAL',
-                  gap: 16,
+                  gap: 20,
                   padding: 0,
                   alignment: 'START',
                   crossAlignment: 'STRETCH',
                   widthMode: 'FILL',
                   heightMode: 'HUG',
-                  wrap: true,
                 },
-                style: {},
-                children: (topComponents.length > 0
-                  ? topComponents
-                  : [
-                      { name: 'HeaderNav', filePath: 'src/components/HeaderNav.jsx' },
-                      { name: 'ContentPanel', filePath: 'src/components/ContentPanel.jsx' },
-                      { name: 'ActionFooter', filePath: 'src/components/ActionFooter.jsx' },
-                    ]
-                )
-                  .slice(0, 3)
-                  .map((comp) => ({
+                children: [
+                  {
+                    title: 'Status Operasional',
+                    val: 'Aktif & Normal',
+                    sub: 'Semua modul aplikasi berjalan stabil',
+                    valColor: '#21845A',
+                  },
+                  {
+                    title: 'Total Modul UI',
+                    val: `${Math.max(3, topComponents.length || 4)} Komponen`,
+                    sub: 'Terhubung ke sistem desain terintegrasi',
+                    valColor: textPrimary,
+                  },
+                  {
+                    title: 'Koneksi Sensor & Data',
+                    val: '99.8% Sinkron',
+                    sub: 'Update data telemetri real-time',
+                    valColor: primaryAccent,
+                  },
+                ].map((item, idx) => ({
+                  id: generateNodeId('frame'),
+                  type: NODE_TYPES.FRAME,
+                  name: `Metric Card — ${item.title}`,
+                  width: 400,
+                  height: 'HUG',
+                  layout: {
+                    mode: 'VERTICAL',
+                    gap: 8,
+                    padding: 20,
+                    alignment: 'START',
+                    crossAlignment: 'START',
+                    widthMode: 'FILL',
+                    heightMode: 'HUG',
+                  },
+                  style: {
+                    background: cardSurface,
+                    borderColor,
+                    borderWidth: 1,
+                    borderRadius: 10,
+                  },
+                  children: [
+                    {
+                      id: generateNodeId('text'),
+                      type: NODE_TYPES.TEXT,
+                      name: 'Metric Label',
+                      text: item.title,
+                      style: { color: textSecondary },
+                      typography: { fontFamily: 'Inter', fontSize: 12, fontWeight: 500 },
+                    },
+                    {
+                      id: generateNodeId('text'),
+                      type: NODE_TYPES.TEXT,
+                      name: 'Metric Value',
+                      text: item.val,
+                      style: { color: item.valColor },
+                      typography: { fontFamily: 'Inter', fontSize: 26, fontWeight: 700 },
+                    },
+                    {
+                      id: generateNodeId('text'),
+                      type: NODE_TYPES.TEXT,
+                      name: 'Metric Subtitle',
+                      text: item.sub,
+                      style: { color: textSecondary },
+                      typography: { fontFamily: 'Inter', fontSize: 12, fontWeight: 400 },
+                    },
+                  ],
+                })),
+              },
+              // Structured Content / Records Table
+              {
+                id: generateNodeId('frame'),
+                type: NODE_TYPES.FRAME,
+                name: 'Content Table Panel',
+                width: 'FILL',
+                height: 'HUG',
+                layout: {
+                  mode: 'VERTICAL',
+                  gap: 12,
+                  padding: 24,
+                  alignment: 'START',
+                  crossAlignment: 'STRETCH',
+                  widthMode: 'FILL',
+                  heightMode: 'HUG',
+                },
+                style: {
+                  background: cardSurface,
+                  borderColor,
+                  borderWidth: 1,
+                  borderRadius: 12,
+                },
+                children: [
+                  {
+                    id: generateNodeId('text'),
+                    type: NODE_TYPES.TEXT,
+                    name: 'Section Title',
+                    text: 'Daftar Layanan & Log Aktivitas',
+                    style: { color: textPrimary },
+                    typography: { fontFamily: 'Inter', fontSize: 16, fontWeight: 600 },
+                  },
+                  ...[
+                    ['Layanan Monitoring Utama', 'Aktif • 24 jam', '#21845A'],
+                    ['Integrasi Data Real-Time', 'Tersambung', '#21845A'],
+                    ['Modul Notifikasi & Peringatan', 'Siaga', '#5B63D3'],
+                  ].map(([serviceName, statusTxt, statusCol], i) => ({
                     id: generateNodeId('frame'),
                     type: NODE_TYPES.FRAME,
-                    name: `Component — <${comp.name} />`,
-                    width: 380,
+                    name: `Row ${i + 1} — ${serviceName}`,
+                    width: 'FILL',
                     height: 'HUG',
                     layout: {
-                      mode: 'VERTICAL',
-                      gap: 10,
-                      padding: 20,
-                      alignment: 'START',
-                      crossAlignment: 'START',
+                      mode: 'HORIZONTAL',
+                      gap: 16,
+                      padding: 14,
+                      alignment: 'SPACE_BETWEEN',
+                      crossAlignment: 'CENTER',
                       widthMode: 'FILL',
                       heightMode: 'HUG',
                     },
                     style: {
-                      background: '#FFFFFF',
-                      borderColor: '#E2E8F0',
-                      borderWidth: 1,
-                      borderRadius: 10,
+                      background: i % 2 === 0 ? '#F8FAFC' : '#FFFFFF',
+                      borderRadius: 8,
                     },
                     children: [
                       {
                         id: generateNodeId('text'),
                         type: NODE_TYPES.TEXT,
-                        name: 'Component Tag',
-                        text: `<${comp.name} />`,
-                        style: { color: '#0F172A' },
-                        typography: { fontFamily: 'Inter', fontSize: 15, fontWeight: 600 },
+                        name: 'Service Name',
+                        text: serviceName,
+                        style: { color: textPrimary },
+                        typography: { fontFamily: 'Inter', fontSize: 13, fontWeight: 500 },
                       },
                       {
                         id: generateNodeId('text'),
                         type: NODE_TYPES.TEXT,
-                        name: 'Component File Path',
-                        text: comp.filePath,
-                        style: { color: '#64748B' },
-                        typography: { fontFamily: 'Inter', fontSize: 12, fontWeight: 400 },
-                      },
-                      {
-                        id: generateNodeId('comp'),
-                        type: NODE_TYPES.COMPONENT_INSTANCE,
-                        name: `${comp.name} Interactive Action`,
-                        componentId: `comp_${comp.name.toLowerCase()}`,
-                        width: 'HUG',
-                        height: 'HUG',
-                        layout: {
-                          mode: 'HORIZONTAL',
-                          gap: 8,
-                          padding: { top: 8, right: 14, bottom: 8, left: 14 },
-                          alignment: 'CENTER',
-                          crossAlignment: 'CENTER',
-                        },
-                        style: {
-                          background: primaryAccent,
-                          borderRadius: 6,
-                        },
-                        children: [
-                          {
-                            id: generateNodeId('text'),
-                            type: NODE_TYPES.TEXT,
-                            name: 'Action Label',
-                            text: `Inspect ${comp.name}`,
-                            style: { color: '#FFFFFF' },
-                            typography: { fontFamily: 'Inter', fontSize: 12, fontWeight: 500 },
-                          },
-                        ],
+                        name: 'Status Badge',
+                        text: statusTxt,
+                        style: { color: statusCol },
+                        typography: { fontFamily: 'Inter', fontSize: 12, fontWeight: 600 },
                       },
                     ],
                   })),
+                ],
               },
             ],
           },

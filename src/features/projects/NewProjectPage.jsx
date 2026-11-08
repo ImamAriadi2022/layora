@@ -51,7 +51,7 @@ export default function NewProjectPage() {
     approveBridgeDirectory,
   } = useAgentStore();
   const { references, toggleReferenceTaskAttachment } = useReferenceStore();
-  const { designTokens } = useDesignSystemStore((s) => ({ designTokens: s.designSystem }));
+  const { designSystem: designTokens } = useDesignSystemStore();
 
   // Step 1: Project Details
   const [projectName, setProjectName] = useState('');
@@ -185,6 +185,92 @@ export default function NewProjectPage() {
     setActiveAgent(selectedAgentId);
 
     try {
+      // External Agent (Antigravity) Flow: Generate exchange folders & go straight to Agent Room
+      if (executionMode === EXECUTION_MODES.EXTERNAL) {
+        setLifecycleStage('Menyiapkan file exchange untuk Antigravity');
+        const projId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        const docId = `doc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
+        let sourceAnalysisData = sourcePreviewReport;
+        if (generationMode === 'source-code' && !sourceAnalysisData) {
+          try {
+            if (sourceType === 'zip' && zipFile) {
+              const res = await analyzeZipArchiveFile(zipFile, viewport);
+              sourceAnalysisData = res.report;
+            } else if (sourcePathOrUrl.trim()) {
+              await approveBridgeDirectory(sourcePathOrUrl.trim());
+              const res = await inspectSourceViaBridge({
+                sourceType,
+                sourceValue: sourcePathOrUrl.trim(),
+                viewport,
+              });
+              sourceAnalysisData = res?.report;
+            }
+          } catch (e) {
+            console.warn('Could not auto-analyze source before exchange init:', e);
+          }
+        }
+
+        let bridgeExchange = null;
+        try {
+          const initRes = await fetch('/bridge/init-exchange', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId: projId,
+              projectName: finalName,
+              platform,
+              viewport,
+              generationMode,
+              prompt: prompt || `Proyek ${finalName} (${generationMode})`,
+              sourcePath: sourcePathOrUrl || '',
+              sourceCodeAnalysis: sourceAnalysisData || null,
+              designTokens: designTokens || null,
+              references: references.filter((r) => r.attachedToTask),
+            }),
+          });
+          if (initRes.ok) {
+            bridgeExchange = await initRes.json();
+          }
+        } catch {
+          // offline fallback
+        }
+
+        const emptyInitialDoc = {
+          schemaVersion: '1.0.0',
+          document: {
+            id: docId,
+            name: finalName,
+            viewport,
+            background: '#0F172A',
+            children: [],
+          },
+          metadata: {
+            createdAt: new Date().toISOString(),
+            generatedBy: 'Antigravity External Agent (Pending First Prompt)',
+            sourceMode: generationMode,
+            awaitingExternalAgent: true,
+          },
+        };
+
+        await createProject({
+          id: projId,
+          name: finalName,
+          description: description || `Proyek terhubung ke Antigravity via file exchange.`,
+          platform,
+          viewport,
+          executionMode,
+          selectedAgentId,
+          generationMode,
+          initialDocument: emptyInitialDoc,
+          bridgeExchange,
+          sourceReport: sourceAnalysisData || null,
+        });
+
+        navigate('/workspace?view=agent-room');
+        return;
+      }
+
       if (generationMode === 'source-code') {
         setLifecycleStage('Preparing source code reconstruction');
         let docToUse = reconstructedDocPreview;
@@ -673,6 +759,65 @@ export default function NewProjectPage() {
             </div>
           ) : (
             <div className="space-y-4 pt-2">
+              {/* Engine Selection for Source Code */}
+              <div className="rounded-control border border-border bg-panel-muted p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-text-primary">
+                    Pilih Engine Pemrosesan Source Code:
+                  </span>
+                  <span className="text-meta font-medium text-accent">
+                    {executionMode === EXECUTION_MODES.EXTERNAL
+                      ? 'Antigravity File Sync'
+                      : 'Local Built-in Synthesizer'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExecutionMode(EXECUTION_MODES.EXTERNAL);
+                      const extAgent = agents.find((a) => a.executionMode === EXECUTION_MODES.EXTERNAL);
+                      if (extAgent) setSelectedAgentId(extAgent.id);
+                    }}
+                    className={`p-3 rounded-control border text-left transition-all ${
+                      executionMode === EXECUTION_MODES.EXTERNAL
+                        ? 'border-accent bg-accent/10 shadow-sm ring-1 ring-accent'
+                        : 'border-border bg-panel text-text-secondary hover:border-text-muted hover:text-text-primary'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 font-semibold text-xs text-accent">
+                      <Terminal className="h-4 w-4" />
+                      <span>Antigravity AI Agent (Direkomendasikan)</span>
+                    </div>
+                    <p className="mt-1.5 text-meta text-text-secondary leading-relaxed">
+                      Membuat folder exchange <code>.layora/</code> langsung di dalam folder kode sumber referensi Anda. Antigravity di VS Code/IDE akan membaca dan merender 1 master canvas yang ramah Figma.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExecutionMode(EXECUTION_MODES.LOCAL);
+                      const locAgent = agents.find((a) => a.executionMode === EXECUTION_MODES.LOCAL);
+                      if (locAgent) setSelectedAgentId(locAgent.id);
+                    }}
+                    className={`p-3 rounded-control border text-left transition-all ${
+                      executionMode === EXECUTION_MODES.LOCAL
+                        ? 'border-accent bg-accent/10 shadow-sm ring-1 ring-accent'
+                        : 'border-border bg-panel text-text-secondary hover:border-text-muted hover:text-text-primary'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 font-semibold text-xs text-text-primary">
+                      <Cpu className="h-4 w-4" />
+                      <span>Local Rule-Based Synthesizer</span>
+                    </div>
+                    <p className="mt-1.5 text-meta text-text-secondary leading-relaxed">
+                      Ekstraksi instan berbasis parser lokal di browser tanpa AI agent eksternal. Cepat untuk inspeksi struktur awal.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[
                   { id: 'directory', label: 'Local Directory', icon: FolderOpen },
@@ -836,7 +981,9 @@ export default function NewProjectPage() {
               className="inline-flex items-center gap-2 rounded-control bg-accent px-5 py-2 text-btn text-white hover:bg-accent-hover disabled:opacity-60"
             >
               <span>
-                {generationMode === 'source-code'
+                {executionMode === EXECUTION_MODES.EXTERNAL
+                  ? 'Inisialisasi File Exchange & Buka Antigravity Room'
+                  : generationMode === 'source-code'
                   ? 'Reconstruct & Open Workspace'
                   : 'Generate Design & Open Workspace'}
               </span>

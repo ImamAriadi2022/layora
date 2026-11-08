@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Light Theme Tokens (from design.md Section 2.3) */
+  --app-bg: #F5F6F8;
+  --panel-bg: #FFFFFF;
+  --panel-muted: #F0F1F4;
+  --canvas-bg: #E9EBEF;
+  --border: #E1E4E8;
+  --text-primary: #20242B;
+  --text-secondary: #69717D;
+  --text-muted: #9299A4;
+  --accent: #5B63D3;
+  --accent-hover: #4B52C0;
+  --accent-subtle: rgba(91, 99, 211, 0.10);
+  --success: #21845A;
+  --warning: #A96A16;
+  --danger: #C44949;
+}
+
+.dark {
+  /* Dark Theme Tokens (from design.md Section 2.3) */
+  --app-bg: #17191D;
+  --panel-bg: #202329;
+  --panel-muted: #292D34;
+  --canvas-bg: #111318;
+  --border: #343942;
+  --text-primary: #F1F3F5;
+  --text-secondary: #A4ABB5;
+  --text-muted: #7E8793;
+  --accent: #858BFF;
+  --accent-hover: #989DFF;
+  --accent-subtle: rgba(133, 139, 255, 0.14);
+  --success: #48B887;
+  --warning: #E5AC54;
+  --danger: #EF7777;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--text-primary);
+  background-color: var(--app-bg);
+}
+
+/* Custom subtle scrollbars for utility panels */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Canvas grid pattern */
+.canvas-dot-grid {
+  background-color: var(--canvas-bg);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* Prevent workspace styles from leaking into rendered design artboard */
+.layora-artboard-isolation {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: initial;
+  line-height: normal;
+  text-align: left;
+  user-select: none;
+}
